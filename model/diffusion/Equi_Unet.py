@@ -85,12 +85,28 @@ class EquiDiffusionUNet(torch.nn.Module):
         timestep = time
         B, T = sample.shape[:2]
 
+        if cond is None or "state" not in cond:
+            raise ValueError("cond must contain 'state' for EquiDiffusionUNet")
+        state = cond["state"]  
+        if state.shape[-1] < 9:
+            raise ValueError(f"state last dim must be at least 9 (pos+quat+gripper), got {state.shape[-1]}")
+        ee_pos = state[..., 0:3]
+        ee_quat = state[..., 3:7]#xyzw
+        ee_q = state[..., 7:9]
+
+        agentview = cond.get("agentview_image", None)
+        if agentview is None and "rgb" in cond:
+            agentview = cond["rgb"]
+        if eye_in_hand is None and agentview is not None:
+            eye_in_hand = agentview
+        if agentview is None or eye_in_hand is None:
+            raise ValueError("EquivariantObsEnc requires image inputs: provide 'agentview_image'/'robot0_eye_in_hand_image' or 'rgb'.")
+
         nobs = {
-            "agentview_image": cond["agentview_image"],
-            "robot0_eef_pos": cond["robot0_eef_pos"],
-            "robot0_eef_quat": cond["robot0_eef_quat"],
-            "robot0_gripper_qpos": cond["robot0_gripper_qpos"],
-            "robot0_eye_in_hand_image": cond["robot0_eye_in_hand_image"],
+            "agentview_image": agentview,
+            "robot0_eef_pos": ee_pos,
+            "robot0_eef_quat": ee_quat,
+            "robot0_gripper_qpos": ee_q,
         }
 
         global_cond = self.obs_encoder(nobs)
@@ -126,4 +142,3 @@ class EquiDiffusionUNet(torch.nn.Module):
         out = rearrange(out, "(b t) n -> b t n", b=B)
         
         return out
- 
