@@ -16,3 +16,7 @@
 -`model/diffusion/Equi_Unet.py`: `EquiDiffusionUNet` wrapper that:
 -  - Packs actions into geometric tensors matching ESCNN FieldType.
 -  - Calls `EquivariantObsEnc` to produce `global_cond`, feeds into `ConditionalUnet1D`.
+
+
+## TODO
+The configuration parameters in model/diffusion/Equi_Unet.py are incomplete. Refer to model/diffusion/unet.py to adjust it into a trainable format.
