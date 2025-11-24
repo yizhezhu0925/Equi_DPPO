@@ -1,0 +1,106 @@
+import torch
+from escnn import gspaces, nn
+from escnn.group import CyclicGroup
+from einops import rearrange
+import crop_randomizer as dmvc
+from Equi_encoder import EquivariantResEncoder96Cyclic
+from rotation_transformer import RotationTransformer
+
+class ModuleAttrMixin(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self._dummy_variable = nn.Parameter()
+
+    @property
+    def device(self):
+        return next(iter(self.parameters())).device
+    
+    @property
+    def dtype(self):
+        return next(iter(self.parameters())).dtype
+
+
+class Identity(torch.nn.Module):
+    def __init__(self, *args, **kwargs):
+        super(Identity, self).__init__()
+
+    def forward(self, x):
+        return x
+
+class EquivariantObsEnc(ModuleAttrMixin):
+    def __init__(
+        self,
+        obs_shape=(3, 96, 96),
+        crop_shape=(96, 96),
+        n_hidden=128,
+        N=8,
+        initialize=True,
+    ):
+        super().__init__()
+        obs_channel = obs_shape[0]
+        self.n_hidden = n_hidden
+        self.N = N
+        self.group = gspaces.no_base_space(CyclicGroup(self.N))
+        self.token_type = nn.FieldType(self.group, self.n_hidden * [self.group.regular_repr])
+        self.enc_obs = EquivariantResEncoder96Cyclic(obs_channel, self.n_hidden, initialize)
+        self.enc_out = nn.Linear(
+            nn.FieldType(
+                self.group,
+                n_hidden * [self.group.regular_repr] # agentview
+                + 4 * [self.group.irrep(1)] # pos, rot
+                + 3 * [self.group.trivial_repr], # gripper (2), z zpos
+            ),
+            self.token_type,
+        )
+        
+        self.quaternion_to_sixd = RotationTransformer('quaternion', 'rotation_6d')
+
+        self.gTgc = torch.Tensor([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+
+        self.crop_randomizer = dmvc.CropRandomizer(
+            input_shape=obs_shape,
+            crop_height=crop_shape[0],
+            crop_width=crop_shape[1],
+        )
+
+    def get6DRotation(self, quat):
+        # data is in xyzw, but rotation transformer takes wxyz
+        return self.quaternion_to_sixd.forward(quat[:, [3, 0, 1, 2]]) 
+        
+    def forward(self, nobs):
+        obs = nobs["agentview_image"]
+        ee_pos = nobs["robot0_eef_pos"]
+        ee_quat = nobs["robot0_eef_quat"]
+        ee_q = nobs["robot0_gripper_qpos"]
+        # B, T, C, H, W
+        batch_size = obs.shape[0]
+        t = obs.shape[1]
+        obs = rearrange(obs, "b t c h w -> (b t) c h w")
+        ee_pos = rearrange(ee_pos, "b t d -> (b t) d")
+        ee_quat = rearrange(ee_quat, "b t d -> (b t) d")
+        ee_q = rearrange(ee_q, "b t d -> (b t) d")
+        obs = self.crop_randomizer(obs)
+        ee_rot = self.get6DRotation(ee_quat)
+        enc_out = self.enc_obs(obs).tensor.reshape(batch_size * t, -1)  # b d
+        pos_xy = ee_pos[:, 0:2]
+        pos_z = ee_pos[:, 2:3]
+        features = torch.cat(
+            [
+                enc_out,
+                pos_xy,
+                # ee_rot is the first two rows of the rotation matrix (i.e., the rotation 6D repr.)
+                # each column vector in the first two rows of the rotation 6d forms a rho1 vector
+                ee_rot[:, 0:1],
+                ee_rot[:, 3:4],
+                ee_rot[:, 1:2],
+                ee_rot[:, 4:5],
+                ee_rot[:, 2:3],
+                ee_rot[:, 5:6],
+                pos_z,
+                ee_q,
+            ],
+            dim=1
+        )
+        features = nn.GeometricTensor(features, self.enc_out.in_type)
+        out = self.enc_out(features).tensor
+        return rearrange(out, "(b t) d -> b t d", b=batch_size)
