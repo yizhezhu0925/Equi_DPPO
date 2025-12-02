@@ -2,14 +2,14 @@ import torch
 from escnn import gspaces, nn
 from escnn.group import CyclicGroup
 from einops import rearrange
-import crop_randomizer as dmvc
-from Equi_encoder import EquivariantResEncoder96Cyclic
-from rotation_transformer import RotationTransformer
+import model.common.crop_randomizer as dmvc
+from model.common.Equi_encoder import EquivariantResEncoder96Cyclic
+from model.common.rotation_transformer import RotationTransformer
 
-class ModuleAttrMixin(nn.Module):
+class ModuleAttrMixin(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self._dummy_variable = nn.Parameter()
+        self._dummy_variable = torch.nn.Parameter()
 
     @property
     def device(self):
@@ -76,6 +76,7 @@ class EquivariantObsEnc(ModuleAttrMixin):
         batch_size = obs.shape[0]
         t = obs.shape[1]
         obs = rearrange(obs, "b t c h w -> (b t) c h w")
+        obs = obs.float() / 255.0
         ee_pos = rearrange(ee_pos, "b t d -> (b t) d")
         ee_quat = rearrange(ee_quat, "b t d -> (b t) d")
         ee_q = rearrange(ee_q, "b t d -> (b t) d")

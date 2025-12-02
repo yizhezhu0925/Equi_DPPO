@@ -2,6 +2,9 @@ from escnn import gspaces, nn
 import torch
 import torch.nn.functional as F
 
+
+
+
 class EquiResBlock(torch.nn.Module):
     def __init__(
         self,

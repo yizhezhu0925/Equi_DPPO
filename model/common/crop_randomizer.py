@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as ttf
-import tensor_util as tu
+from model.common import tensor_util as tu
 
 class CropRandomizer(nn.Module):
     """
@@ -27,8 +27,9 @@ class CropRandomizer(nn.Module):
         super().__init__()
 
         assert len(input_shape) == 3 # (C, H, W)
-        assert crop_height < input_shape[1]
-        assert crop_width < input_shape[2]
+        # allow full-size crop as well
+        assert crop_height <= input_shape[1]
+        assert crop_width <= input_shape[2]
 
         self.input_shape = input_shape
         self.crop_height = crop_height
@@ -176,9 +177,9 @@ def crop_image_from_indices(images, crop_indices, crop_height, crop_width):
 
     # make sure @crop_indices are in valid range
     assert (crop_indices[..., 0] >= 0).all().item()
-    assert (crop_indices[..., 0] < (image_h - crop_height)).all().item()
+    assert (crop_indices[..., 0] <= max(0, image_h - crop_height)).all().item()
     assert (crop_indices[..., 1] >= 0).all().item()
-    assert (crop_indices[..., 1] < (image_w - crop_width)).all().item()
+    assert (crop_indices[..., 1] <= max(0, image_w - crop_width)).all().item()
 
     # convert each crop index (ch, cw) into a list of pixel indices that correspond to the entire window.
 

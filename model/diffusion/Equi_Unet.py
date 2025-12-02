@@ -3,11 +3,12 @@ import torch
 from escnn import gspaces, nn
 from escnn.group import CyclicGroup
 from einops import rearrange, repeat
-from Equi_Unet_Lab import ConditionalUnet1D
+from model.diffusion.Equi_Unet_Lab import ConditionalUnet1D
 from model.common.Equi_obs_encoder import EquivariantObsEnc
 
+#
 class EquiDiffusionUNet(torch.nn.Module):
-    def __init__(self, act_emb_dim, local_cond_dim, global_cond_dim, diffusion_step_embed_dim, down_dims, kernel_size, n_groups, cond_predict_scale, N):
+    def __init__(self, act_emb_dim, local_cond_dim, global_cond_dim, diffusion_step_embed_dim, down_dims, kernel_size, n_groups, cond_predict_scale, N=8):
         super().__init__()
         self.unet = ConditionalUnet1D(
             input_dim=act_emb_dim,
@@ -40,16 +41,18 @@ class EquiDiffusionUNet(torch.nn.Module):
 
     def getOutput(self, conv_out):
         xy = conv_out[:, 0:2]
-        cos1 = conv_out[:, 2:3]
-        sin1 = conv_out[:, 3:4]
-        cos2 = conv_out[:, 4:5]
-        sin2 = conv_out[:, 5:6]
-        cos3 = conv_out[:, 6:7]
-        sin3 = conv_out[:, 7:8]
         z = conv_out[:, 8:9]
+        # invert the rot reordering used in getActionGeometricTensor
+        rot0 = conv_out[:, 2:3]
+        rot1 = conv_out[:, 4:5]
+        rot2 = conv_out[:, 6:7]
+        rot3 = conv_out[:, 3:4]
+        rot4 = conv_out[:, 5:6]
+        rot5 = conv_out[:, 7:8]
+        rot = torch.cat([rot0, rot1, rot2, rot3, rot4, rot5], dim=1)
         g = conv_out[:, 9:10]
 
-        action = torch.cat((xy, z, cos1, cos2, cos3, sin1, sin2, sin3, g), dim=1)
+        action = torch.cat((xy, z, rot, g), dim=1)
         return action
     
     def getActionGeometricTensor(self, act):
@@ -97,6 +100,7 @@ class EquiDiffusionUNet(torch.nn.Module):
         agentview = cond.get("agentview_image", None)
         if agentview is None and "rgb" in cond:
             agentview = cond["rgb"]
+        eye_in_hand = cond.get("robot0_eye_in_hand_image", None)
         if eye_in_hand is None and agentview is not None:
             eye_in_hand = agentview
         if agentview is None or eye_in_hand is None:
@@ -113,6 +117,9 @@ class EquiDiffusionUNet(torch.nn.Module):
         global_cond = rearrange(global_cond, "b t d -> b (t d)")
 
         local_cond = None
+        action_dim = sample.shape[-1]
+        if action_dim != 10:
+            raise ValueError(f"EquiDiffusionUNet expects 10D actions (xyz+rot6d+g), got {action_dim}")
 
         sample = rearrange(sample, "b t d -> (b t) d")
         sample = self.getActionGeometricTensor(sample)
@@ -138,7 +145,7 @@ class EquiDiffusionUNet(torch.nn.Module):
         out = nn.GeometricTensor(out, self.act_type)
         out = self.out_layer(out).tensor.reshape(B * T, -1)
         out = self.getOutput(out)
-        
+
         out = rearrange(out, "(b t) n -> b t n", b=B)
         
         return out

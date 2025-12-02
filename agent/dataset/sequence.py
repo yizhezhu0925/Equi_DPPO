@@ -45,6 +45,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         max_n_episodes=10000,
         use_img=False,
         device="cuda:0",
+        convert_to_rot6d=False,
     ):
         assert (
             img_cond_steps <= cond_steps
@@ -56,6 +57,7 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         self.use_img = use_img
         self.max_n_episodes = max_n_episodes
         self.dataset_path = dataset_path
+        self.convert_to_rot6d = convert_to_rot6d
 
         # Load dataset to device specified
         if dataset_path.endswith(".npz"):
@@ -78,6 +80,8 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         self.actions = (
             torch.from_numpy(dataset["actions"][:total_num_steps]).float().to(device)
         )  # (total_num_steps, action_dim)
+        if self.convert_to_rot6d:
+            self.actions = self._convert_actions_to_rot6d(self.actions)
         log.info(f"Loaded dataset from {dataset_path}")
         log.info(f"Number of episodes: {min(max_n_episodes, len(traj_lengths))}")
         log.info(f"States shape/type: {self.states.shape, self.states.dtype}")
@@ -139,6 +143,50 @@ class StitchedSequenceDataset(torch.utils.data.Dataset):
         val_indices = [i for i in range(len(self.indices)) if i not in train_indices]
         self.indices = train_indices
         return val_indices
+
+    @staticmethod
+    def _axis_angle_to_rot6d(vec: torch.Tensor) -> torch.Tensor:
+        """
+        vec: (..., 3) axis-angle
+        return: (..., 6) first two columns of rotation matrix
+        """
+        angle = torch.linalg.norm(vec, dim=-1, keepdim=True)
+        axis = vec / (angle + 1e-8)
+        x, y, z = axis.unbind(-1)
+        zeros = torch.zeros_like(x)
+        K = torch.stack(
+            [
+                torch.stack([zeros, -z, y], dim=-1),
+                torch.stack([z, zeros, -x], dim=-1),
+                torch.stack([-y, x, zeros], dim=-1),
+            ],
+            dim=-2,
+        )
+        I = torch.eye(3, device=vec.device, dtype=vec.dtype).expand(
+            vec.shape[:-1] + (3, 3)
+        )
+        ang = angle.squeeze(-1)[..., None, None]
+        sin = torch.sin(ang)
+        cos = torch.cos(ang)
+        R = I + sin * K + (1 - cos) * (K @ K)
+        R = torch.where(ang < 1e-8, I, R)
+        return R[..., :3, :2].reshape(vec.shape[:-1] + (6,))
+
+    def _convert_actions_to_rot6d(self, actions: torch.Tensor) -> torch.Tensor:
+        """
+        Convert actions from 7D (xyz + axis-angle + gripper) to 10D (xyz + rot6d + gripper).
+        If already 10D, return as-is.
+        """
+        act_dim = actions.shape[1]
+        if act_dim == 10:
+            return actions
+        if act_dim != 7:
+            raise ValueError(f"convert_to_rot6d=True but action_dim={act_dim}, expected 7 or 10")
+        pos = actions[:, :3]
+        aa = actions[:, 3:6]
+        grip = actions[:, 6:]
+        rot6 = self._axis_angle_to_rot6d(aa)
+        return torch.cat([pos, rot6, grip], dim=1)
 
     def __len__(self):
         return len(self.indices)

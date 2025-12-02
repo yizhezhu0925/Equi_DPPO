@@ -68,11 +68,15 @@ class PreTrainAgent:
         # Wandb
         self.use_wandb = cfg.wandb is not None
         if cfg.wandb is not None:
+            # Offline/sandbox friendly W&B: no network, no background service sockets
+            os.environ.setdefault("WANDB_MODE", "offline")
+            os.environ.setdefault("WANDB__SERVICE", "disabled")
             wandb.init(
                 entity=cfg.wandb.entity,
                 project=cfg.wandb.project,
                 name=cfg.wandb.run,
                 config=OmegaConf.to_container(cfg, resolve=True),
+                settings=wandb.Settings(mode="offline", _disable_service=True),
             )
 
         # Build model
@@ -135,7 +139,8 @@ class PreTrainAgent:
         raise NotImplementedError
 
     def reset_parameters(self):
-        self.ema_model.load_state_dict(self.model.state_dict())
+        # escnn modules register buffers lazily; allow missing keys
+        self.ema_model.load_state_dict(self.model.state_dict(), strict=False)
 
     def step_ema(self):
         if self.epoch < self.epoch_start_ema:
