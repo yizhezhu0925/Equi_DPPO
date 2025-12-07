@@ -1,0 +1,85 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.eval.eval_diffusion_img_agent.EvalImgDiffusionAgent
+
+name: ${env_name}_eval_diffusion_equiunet_img_ta${horizon_steps}_td${denoising_steps}
+logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-eval/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path:  log/robomimic-pretrain/can_pre_diffusion_equiunet_img_ta4_td100/2025-12-07_11-14-02_42/checkpoint/state_500.pt
+robomimic_env_cfg_path: cfg/robomimic/env_meta/${env_name}-img.json
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env_name}-img/normalization.npz
+
+seed: 42
+device: cuda:0
+env_name: can
+obs_dim: 9
+action_dim: 10  # rot6d representation (xyz + rot6d + gripper)
+denoising_steps: 100
+cond_steps: 1
+img_cond_steps: 1
+horizon_steps: 4
+act_steps: 4
+use_ddim: True
+ddim_steps: 5
+ft_denoising_steps: 0
+
+n_steps: 300  # each episode takes max_episode_steps / act_steps steps
+render_num: 0
+
+env:
+  n_envs: 20
+  name: ${env_name}
+  best_reward_threshold_for_success: 1
+  max_episode_steps: 300
+  save_video: False
+  use_image_obs: True
+  wrappers:
+    robomimic_image:
+      normalization_path: ${normalization_path}
+      low_dim_keys: ['robot0_eef_pos',
+                     'robot0_eef_quat',
+                     'robot0_gripper_qpos']
+      image_keys: ['robot0_eye_in_hand_image']
+      shape_meta: ${shape_meta}
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: True
+
+shape_meta:
+  obs:
+    rgb:
+      shape: [3, 96, 96]
+    state:
+      shape: [9]
+  action: 
+    shape: [10]
+
+model:
+  _target_: model.diffusion.diffusion_equi.EquiDiffusionModelEval
+  convert_to_axis_angle: True  # Convert rot6d output to axis-angle for env
+  predict_epsilon: True
+  denoised_clip_value: 1.0
+  randn_clip_value: 3
+  use_ddim: ${use_ddim}
+  ddim_steps: ${ddim_steps}
+  network_path: ${base_policy_path}
+  network:
+    _target_: model.diffusion.Equi_Unet.EquiDiffusionUNet
+    act_emb_dim: 64
+    local_cond_dim: null
+    global_cond_dim: 128
+    diffusion_step_embed_dim: 256
+    down_dims: [256, 512, 1024]
+    kernel_size: 3
+    n_groups: 8
+    cond_predict_scale: false
+    N: 8
+  horizon_steps: ${horizon_steps}
+  obs_dim: ${obs_dim}
+  action_dim: ${action_dim}
+  denoising_steps: ${denoising_steps}
+  device: ${device}

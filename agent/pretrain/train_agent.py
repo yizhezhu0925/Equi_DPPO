@@ -69,14 +69,11 @@ class PreTrainAgent:
         self.use_wandb = cfg.wandb is not None
         if cfg.wandb is not None:
             # Offline/sandbox friendly W&B: no network, no background service sockets
-            os.environ.setdefault("WANDB_MODE", "offline")
-            os.environ.setdefault("WANDB__SERVICE", "disabled")
             wandb.init(
                 entity=cfg.wandb.entity,
                 project=cfg.wandb.project,
                 name=cfg.wandb.run,
                 config=OmegaConf.to_container(cfg, resolve=True),
-                settings=wandb.Settings(mode="offline", _disable_service=True),
             )
 
         # Build model
