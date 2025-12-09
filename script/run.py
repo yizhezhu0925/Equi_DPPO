@@ -12,6 +12,18 @@ import math
 import hydra
 from omegaconf import OmegaConf
 import gdown
+
+from pathlib import Path
+
+# Ensure repo root is on sys.path so `agent`, `model`, etc. import correctly
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+# escnn needs a writable cache directory; point it to repo-local cache
+ESCNN_CACHE = REPO_ROOT / ".cache" / "escnn"
+os.environ.setdefault("ESCNN_CACHE", str(ESCNN_CACHE))
+os.makedirs(os.environ["ESCNN_CACHE"], exist_ok=True)
 from download_url import (
     get_dataset_download_url,
     get_normalization_download_url,
@@ -51,8 +63,12 @@ def main(cfg: OmegaConf):
         log.info(f"Downloading dataset from {download_url} to {download_target}")
         gdown.download_folder(url=download_url, output=download_target)
 
-    # For for-tuning: download normalization if needed
-    if "normalization_path" in cfg and not os.path.exists(cfg.normalization_path):
+    # For fine-tuning/eval: download normalization if needed
+    if (
+        "normalization_path" in cfg
+        and cfg.normalization_path is not None
+        and not os.path.exists(cfg.normalization_path)
+    ):
         download_url = get_normalization_download_url(cfg)
         download_target = cfg.normalization_path
         dir_name = os.path.dirname(download_target)

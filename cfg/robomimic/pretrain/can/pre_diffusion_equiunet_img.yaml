@@ -5,15 +5,16 @@ hydra:
     dir: ${logdir}
 _target_: agent.pretrain.train_diffusion_agent.TrainDiffusionAgent
 
-name: ${env}_pre_diffusion_unet_img_ta${horizon_steps}_td${denoising_steps}
+name: ${env}_pre_diffusion_equiunet_img_ta${horizon_steps}_td${denoising_steps}
 logdir: ${oc.env:DPPO_LOG_DIR}/robomimic-pretrain/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
 train_dataset_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env}-img/train.npz
+normalization_path: ${oc.env:DPPO_DATA_DIR}/robomimic/${env}-img/normalization.npz
 
 seed: 42
 device: cuda:0
 env: can
 obs_dim: 9  # proprioception only
-action_dim: 7
+action_dim: 10  # xyz + rot6d + gripper
 denoising_steps: 100
 horizon_steps: 4
 cond_steps: 1
@@ -28,18 +29,18 @@ shape_meta:
     state:
       shape: [9]
   action: 
-    shape: [7]
+    shape: [10]
 
 train:
-  n_epochs: 2000
-  batch_size: 32
+  n_epochs: 100
+  batch_size: 128
   learning_rate: 1e-4
   weight_decay: 1e-6
   lr_scheduler:
     first_cycle_steps: 2000
     warmup_steps: 100
     min_lr: 1e-5
-  save_model_freq: 500
+  save_model_freq: 100
 
 model:
   _target_: model.diffusion.diffusion.DiffusionModel
@@ -55,12 +56,12 @@ model:
     kernel_size: 3
     n_groups: 8
     cond_predict_scale: false
-    N: 8
+    N: 4
   horizon_steps: ${horizon_steps}
   obs_dim: ${obs_dim}
   action_dim: ${action_dim}
   denoising_steps: ${denoising_steps}
-
+  device: ${device}
 
 ema:
   decay: 0.995
@@ -75,3 +76,5 @@ train_dataset:
   img_cond_steps: ${img_cond_steps}
   device: ${device}
   convert_to_rot6d: True
+  normalization_path: ${normalization_path} 
+  denormalize_obs: True                                       

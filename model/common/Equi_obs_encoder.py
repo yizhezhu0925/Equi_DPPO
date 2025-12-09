@@ -3,7 +3,7 @@ from escnn import gspaces, nn
 from escnn.group import CyclicGroup
 from einops import rearrange
 import model.common.crop_randomizer as dmvc
-from model.common.Equi_encoder import EquivariantResEncoder96Cyclic
+from model.common.Equi_encoder import EquivariantResEncoder96CyclicLite
 from model.common.rotation_transformer import RotationTransformer
 
 class ModuleAttrMixin(torch.nn.Module):
@@ -42,7 +42,7 @@ class EquivariantObsEnc(ModuleAttrMixin):
         self.N = N
         self.group = gspaces.no_base_space(CyclicGroup(self.N))
         self.token_type = nn.FieldType(self.group, self.n_hidden * [self.group.regular_repr])
-        self.enc_obs = EquivariantResEncoder96Cyclic(obs_channel, self.n_hidden, initialize)
+        self.enc_obs = EquivariantResEncoder96CyclicLite(obs_channel, self.n_hidden, initialize, N=self.N)
         self.enc_out = nn.Linear(
             nn.FieldType(
                 self.group,
@@ -65,7 +65,7 @@ class EquivariantObsEnc(ModuleAttrMixin):
 
     def get6DRotation(self, quat):
         # data is in xyzw, but rotation transformer takes wxyz
-        return self.quaternion_to_sixd.forward(quat[:, [3, 0, 1, 2]]) 
+        return self.quaternion_to_sixd.forward(quat[:, [3, 0, 1, 2]])  # xyzw → wxyz
         
     def forward(self, nobs):
         obs = nobs["agentview_image"]

@@ -5,6 +5,12 @@ Also return done=False since we do not terminate episode early.
 
 Modified from https://github.com/real-stanford/diffusion_policy/blob/main/diffusion_policy/env/robomimic/robomimic_image_wrapper.py
 
+Fixed: Added normalize_gripper_only option for equivariant policy evaluation.
+When normalize_obs=False and normalize_gripper_only=True:
+- pos [0:3]: kept as raw values (for equivariance)
+- quat [3:7]: kept as raw unit quaternion in xyzw format (for proper rot6d conversion)
+- gripper [7:9]: normalized to [-1, 1] (to match training)
+
 """
 
 import numpy as np
@@ -19,6 +25,9 @@ class RobomimicImageWrapper(gym.Env):
         env,
         shape_meta: dict,
         normalization_path=None,
+        normalize_obs=True,
+        normalize_action=True,
+        normalize_gripper_only=False,  # NEW: only normalize gripper when normalize_obs=False
         low_dim_keys=[
             "robot0_eef_pos",
             "robot0_eef_quat",
@@ -32,6 +41,7 @@ class RobomimicImageWrapper(gym.Env):
         init_state=None,
         render_hw=(256, 256),
         render_camera_name="agentview",
+        **kwargs,
     ):
         self.env = env
         self.init_state = init_state
@@ -42,8 +52,12 @@ class RobomimicImageWrapper(gym.Env):
         self.clamp_obs = clamp_obs
 
         # set up normalization
-        self.normalize = normalization_path is not None
-        if self.normalize:
+        self.has_stats = normalization_path is not None
+        self.normalize_obs = normalize_obs and self.has_stats
+        self.normalize_action = normalize_action and self.has_stats
+        self.normalize_gripper_only = normalize_gripper_only and self.has_stats  # NEW
+        
+        if self.has_stats:
             normalization = np.load(normalization_path)
             self.obs_min = normalization["obs_min"]
             self.obs_max = normalization["obs_max"]
@@ -80,7 +94,7 @@ class RobomimicImageWrapper(gym.Env):
             observation_space[key] = this_space
         self.observation_space = observation_space
 
-    def normalize_obs(self, obs):
+    def _normalize_obs(self, obs):
         obs = 2 * (
             (obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5
         )  # -> [-1, 1]
@@ -88,28 +102,55 @@ class RobomimicImageWrapper(gym.Env):
             obs = np.clip(obs, -1, 1)
         return obs
 
+    def _normalize_gripper(self, gripper):
+        """Normalize only the gripper values (indices 7:9 of state)."""
+        gripper_min = self.obs_min[7:9]
+        gripper_max = self.obs_max[7:9]
+        gripper_norm = 2 * (
+            (gripper - gripper_min) / (gripper_max - gripper_min + 1e-6) - 0.5
+        )
+        return gripper_norm
+
     def unnormalize_action(self, action):
+        if not self.normalize_action:
+            return action
         action = (action + 1) / 2  # [-1, 1] -> [0, 1]
         return action * (self.action_max - self.action_min) + self.action_min
 
     def get_observation(self, raw_obs):
-        obs = {"rgb": None, "state": None}  # stack rgb if multiple cameras
+        obs = {"rgb": None, "state": None}
         for key in self.obs_keys:
             if key in self.image_keys:
+                img = raw_obs[key]
+                if img.ndim == 3 and img.shape[-1] == 3:
+                    img = np.transpose(img, (2, 0, 1))
                 if obs["rgb"] is None:
-                    obs["rgb"] = raw_obs[key]
+                    obs["rgb"] = img
                 else:
-                    obs["rgb"] = np.concatenate(
-                        [obs["rgb"], raw_obs[key]], axis=0
-                    )  # C H W
+                    obs["rgb"] = np.concatenate([obs["rgb"], img], axis=0)
             else:
                 if obs["state"] is None:
                     obs["state"] = raw_obs[key]
                 else:
                     obs["state"] = np.concatenate([obs["state"], raw_obs[key]], axis=-1)
-        if self.normalize:
-            obs["state"] = self.normalize_obs(obs["state"])
-        obs["rgb"] *= 255  # [0, 1] -> [0, 255], in float64
+        
+        if self.normalize_obs:
+            obs["state"] = self._normalize_obs(obs["state"])
+        elif self.normalize_gripper_only:
+            state = obs["state"].copy()
+            
+            quat_wxyz = state[3:7].copy()
+            
+            quat_xyzw = quat_wxyz[[1, 2, 3, 0]]  
+            state[3:7] = quat_xyzw
+            
+            # gripper 归一化
+            state[7:9] = self._normalize_gripper(state[7:9])
+            obs["state"] = state
+        
+        if obs["rgb"].max() <= 1.0:
+            obs["rgb"] = obs["rgb"] * 255.0
+        obs["rgb"] = obs["rgb"].astype(np.float32)
         return obs
 
     def seed(self, seed=None):
@@ -150,7 +191,7 @@ class RobomimicImageWrapper(gym.Env):
         return self.get_observation(raw_obs)
 
     def step(self, action):
-        if self.normalize:
+        if self.normalize_action:
             action = self.unnormalize_action(action)
         raw_obs, reward, done, info = self.env.step(action)
         obs = self.get_observation(raw_obs)

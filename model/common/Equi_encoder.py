@@ -118,13 +118,106 @@ class EquivariantResEncoder96Cyclic(torch.nn.Module):
                 x = nn.GeometricTensor(x, nn.FieldType(self.group, self.obs_channel * [self.group.trivial_repr]))
 
             return self.conv(x)
-
+    
+class EquivariantResEncoder96CyclicLite(torch.nn.Module):
+    def __init__(self, obs_channel: int = 2, n_out: int = 128, initialize: bool = True, N=8):
+        super().__init__()
+        self.obs_channel = obs_channel
+        self.group = gspaces.rot2dOnR2(N)
+        rep = self.group.regular_repr
+        
+        self.conv = torch.nn.Sequential(
+            # 96
+            nn.R2Conv(
+                nn.FieldType(self.group, obs_channel * [self.group.trivial_repr]),
+                nn.FieldType(self.group, n_out // 8 * [rep]),
+                kernel_size=3,
+                padding=1,
+                initialize=initialize,
+            ),
+            nn.ReLU(nn.FieldType(self.group, n_out // 8 * [rep]), inplace=True),
+            EquiResBlock(self.group, n_out // 8, n_out // 8, initialize=initialize),
+            nn.PointwiseMaxPool(nn.FieldType(self.group, n_out // 8 * [rep]), 2),
+            # 48
+            
+            EquiResBlock(self.group, n_out // 8, n_out // 4, initialize=initialize),
+            EquiResBlock(self.group, n_out // 4, n_out // 4, initialize=initialize),
+            nn.PointwiseMaxPool(nn.FieldType(self.group, n_out // 4 * [rep]), 2),
+            # 24
+            
+            EquiResBlock(self.group, n_out // 4, n_out // 2, initialize=initialize),
+            EquiResBlock(self.group, n_out // 2, n_out // 2, initialize=initialize),
+            nn.PointwiseMaxPool(nn.FieldType(self.group, n_out // 2 * [rep]), 2),
+            # 12
+            
+            EquiResBlock(self.group, n_out // 2, n_out, initialize=initialize),
+            nn.PointwiseMaxPool(nn.FieldType(self.group, n_out * [rep]), 3),
+            # 4
+            
+            nn.R2Conv(
+                nn.FieldType(self.group, n_out * [rep]),
+                nn.FieldType(self.group, n_out * [rep]),
+                kernel_size=4,
+                padding=0,
+                initialize=initialize,
+            ),
+            nn.ReLU(nn.FieldType(self.group, n_out * [rep]), inplace=True),
+            # 1
+        )
+    
+    def forward(self, x) -> nn.GeometricTensor:
+        if type(x) is torch.Tensor:
+            x = nn.GeometricTensor(x, nn.FieldType(self.group, self.obs_channel * [self.group.trivial_repr]))
+        return self.conv(x)
 # testq
 if __name__ == "__main__":
-    # N=8, batch=2, channel=3, size=96x96
-    encoder = EquivariantResEncoder96Cyclic(obs_channel=3, n_out=128, N=8)
-    x = torch.randn(2, 3, 96, 96)#B*C*H*W
-    out = encoder(x)
-    print(f"Input: {x.shape}")
-    #output type should be[2, 1024, 1, 1] (1024 = 128 * 8)
-    print(f"Output GeometricTensor: {out.tensor.shape}")
+    import torch
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Clear cache
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    
+    # Original
+    print("=== EquivariantResEncoder96Cyclic (Original) ===")
+    encoder_orig = EquivariantResEncoder96Cyclic(obs_channel=3, n_out=128, N=8).to(device)
+    x = torch.randn(2, 3, 96, 96, device=device)
+    
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    
+    out = encoder_orig(x)
+    loss = out.tensor.sum()
+    loss.backward()
+    
+    if device.type == "cuda":
+        mem_orig = torch.cuda.max_memory_allocated() / 1024**2
+        print(f"Peak memory (with grad): {mem_orig:.1f} MB")
+    print(f"Output: {out.tensor.shape}")
+    
+    del encoder_orig, out, loss
+    torch.cuda.empty_cache()
+    
+    # Lite version
+    print("\n=== EquivariantResEncoder96CyclicLite (Lite) ===")
+    encoder_lite = EquivariantResEncoder96CyclicLite(obs_channel=3, n_out=128, N=8).to(device)
+    x = torch.randn(2, 3, 96, 96, device=device)
+    
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    
+    out = encoder_lite(x)
+    loss = out.tensor.sum()
+    loss.backward()
+    
+    if device.type == "cuda":
+        mem_lite = torch.cuda.max_memory_allocated() / 1024**2
+        print(f"Peak memory (with grad): {mem_lite:.1f} MB")
+    print(f"Output: {out.tensor.shape}")
+    
+    # Comparison
+    if device.type == "cuda":
+        print(f"\n=== Comparison ===")
+        print(f"Memory saved: {mem_orig - mem_lite:.1f} MB ({(1 - mem_lite/mem_orig)*100:.1f}%)")

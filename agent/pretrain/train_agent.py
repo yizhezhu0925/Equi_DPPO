@@ -1,8 +1,3 @@
-"""
-Parent pre-training agent class.
-
-"""
-
 import os
 import random
 import numpy as np
@@ -134,6 +129,12 @@ class PreTrainAgent:
             gamma=1.0,
         )
         self.reset_parameters()
+        
+        # Resume from checkpoint if specified
+        self.resume_path = cfg.get("resume_path", None)
+        self.epoch = 0  # 初始化 epoch
+        if self.resume_path is not None:
+            self.load(resume_path=self.resume_path)
 
     def run(self):
         raise NotImplementedError
@@ -156,18 +157,34 @@ class PreTrainAgent:
             "epoch": self.epoch,
             "model": self.model.state_dict(),
             "ema": self.ema_model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "lr_scheduler": self.lr_scheduler.state_dict(),
         }
         savepath = os.path.join(self.checkpoint_dir, f"state_{self.epoch}.pt")
         torch.save(data, savepath)
         log.info(f"Saved model to {savepath}")
 
-    def load(self, epoch):
+    def load(self, epoch=None, resume_path=None):
         """
         loads model and ema from disk
         """
-        loadpath = os.path.join(self.checkpoint_dir, f"state_{epoch}.pt")
-        data = torch.load(loadpath, weights_only=True)
+        if resume_path is not None:
+            loadpath = resume_path
+        else:
+            loadpath = os.path.join(self.checkpoint_dir, f"state_{epoch}.pt")
+        
+        data = torch.load(loadpath, weights_only=False, map_location='cuda:0')
 
         self.epoch = data["epoch"]
-        self.model.load_state_dict(data["model"])
-        self.ema_model.load_state_dict(data["ema"])
+        self.model.load_state_dict(data["model"], strict=False)
+        self.ema_model.load_state_dict(data["ema"], strict=False)
+        
+        if "optimizer" in data:
+            self.optimizer.load_state_dict(data["optimizer"])
+            log.info("Restored optimizer state")
+        
+        if "lr_scheduler" in data:
+            self.lr_scheduler.load_state_dict(data["lr_scheduler"])
+            log.info("Restored lr_scheduler state")
+        
+        log.info(f"Resumed from {loadpath}, epoch {self.epoch}")

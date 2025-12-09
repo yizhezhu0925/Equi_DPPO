@@ -1,6 +1,5 @@
 """
-Pre-training diffusion policy
-
+Pre-training diffusion policy with resume support.
 """
 
 import logging
@@ -13,17 +12,21 @@ from agent.pretrain.train_agent import PreTrainAgent, batch_to_device
 
 
 class TrainDiffusionAgent(PreTrainAgent):
-
     def __init__(self, cfg):
         super().__init__(cfg)
 
     def run(self):
-
         timer = Timer()
-        self.epoch = 1
+        
+        # 如果是 resume，从上次的 epoch + 1 开始；否则从 1 开始
+        start_epoch = self.epoch + 1 if self.epoch > 0 else 1
         cnt_batch = 0
-        for _ in range(self.n_epochs):
-
+        
+        log.info(f"Starting training from epoch {start_epoch} to {self.n_epochs}")
+        
+        for epoch in range(start_epoch, self.n_epochs + 1):
+            self.epoch = epoch
+            
             # train
             loss_train_epoch = []
             for batch_train in self.dataloader_train:
@@ -42,6 +45,7 @@ class TrainDiffusionAgent(PreTrainAgent):
                 if cnt_batch % self.update_ema_freq == 0:
                     self.step_ema()
                 cnt_batch += 1
+
             loss_train = np.mean(loss_train_epoch)
 
             # validate
@@ -80,6 +84,3 @@ class TrainDiffusionAgent(PreTrainAgent):
                         step=self.epoch,
                         commit=True,
                     )
-
-            # count
-            self.epoch += 1

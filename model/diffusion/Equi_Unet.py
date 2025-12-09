@@ -23,7 +23,7 @@ class EquiDiffusionUNet(torch.nn.Module):
         self.N = N
         self.group = gspaces.no_base_space(CyclicGroup(self.N))
         self.order = self.N
-        self.obs_encoder = EquivariantObsEnc()
+        self.obs_encoder = EquivariantObsEnc(N=N)
         self.act_type = nn.FieldType(self.group, act_emb_dim * [self.group.regular_repr])
         self.out_layer = nn.Linear(self.act_type, 
                                    self.getOutFieldType())

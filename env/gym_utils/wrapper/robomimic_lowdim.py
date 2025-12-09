@@ -19,6 +19,8 @@ class RobomimicLowdimWrapper(gym.Env):
         self,
         env,
         normalization_path=None,
+        normalize_obs=True,
+        normalize_action=True,
         low_dim_keys=[
             "robot0_eef_pos",
             "robot0_eef_quat",
@@ -29,6 +31,7 @@ class RobomimicLowdimWrapper(gym.Env):
         init_state=None,
         render_hw=(256, 256),
         render_camera_name="agentview",
+        **kwargs,
     ):
         self.env = env
         self.init_state = init_state
@@ -38,8 +41,10 @@ class RobomimicLowdimWrapper(gym.Env):
         self.clamp_obs = clamp_obs
 
         # set up normalization
-        self.normalize = normalization_path is not None
-        if self.normalize:
+        self.has_stats = normalization_path is not None
+        self.normalize_obs = self.has_stats and normalize_obs
+        self.normalize_action = self.has_stats and normalize_action
+        if self.has_stats:
             normalization = np.load(normalization_path)
             self.obs_min = normalization["obs_min"]
             self.obs_max = normalization["obs_max"]
@@ -70,7 +75,7 @@ class RobomimicLowdimWrapper(gym.Env):
             dtype=np.float32,
         )
 
-    def normalize_obs(self, obs):
+    def _normalize_obs(self, obs):
         obs = 2 * (
             (obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5
         )  # -> [-1, 1]
@@ -84,8 +89,8 @@ class RobomimicLowdimWrapper(gym.Env):
 
     def get_observation(self, raw_obs):
         obs = {"state": np.concatenate([raw_obs[key] for key in self.obs_keys], axis=0)}
-        if self.normalize:
-            obs["state"] = self.normalize_obs(obs["state"])
+        if self.normalize_obs:
+            obs["state"] = self._normalize_obs(obs["state"])
         return obs
 
     def seed(self, seed=None):
@@ -121,7 +126,7 @@ class RobomimicLowdimWrapper(gym.Env):
         return self.get_observation(raw_obs)
 
     def step(self, action):
-        if self.normalize:
+        if self.normalize_action:
             action = self.unnormalize_action(action)
         raw_obs, reward, done, info = self.env.step(action)
         obs = self.get_observation(raw_obs)

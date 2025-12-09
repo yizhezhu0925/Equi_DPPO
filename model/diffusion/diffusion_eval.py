@@ -22,48 +22,67 @@ class DiffusionEval(DiffusionModel):
         network_path,
         ft_denoising_steps,  # if running pre-trained model (not fine-tuned), set it to zero; if running fine-tuned model, need to specify the correct number of denoising steps fine-tuned, so that here it knows which model (base or ft) to use for each denoising step
         use_ddim=False,
+        strict_load=False,
         **kwargs,
     ):
         # do not let base class load model
         super().__init__(use_ddim=use_ddim, network_path=None, **kwargs)
         self.ft_denoising_steps = ft_denoising_steps
+        self.strict_load = strict_load
         checkpoint = torch.load(
-            network_path, map_location=self.device, weights_only=True
-        )  # 'network.mlp_mean...', 'actor.mlp_mean...', 'actor_ft.mlp_mean...'
-
-        # Set up base model --- techncally not needed if all denoising steps are fine-tuned
+            network_path, map_location=self.device, weights_only=False
+        )
+        
+        # Set up base model
         self.actor = self.network
-        try:
+        
+        # Check if this is a pre-trained checkpoint (has 'ema' key and no 'actor.' keys)
+        has_actor_keys = any("actor." in key for key in checkpoint["model"].keys())
+        has_ema = "ema" in checkpoint
+        
+        if not has_actor_keys:
+            # Pre-trained checkpoint: load EMA weights (preferred) or model weights
+            if has_ema:
+                # EMA weights have 'network.' prefix, need to strip it for self.actor
+                ema_weights = checkpoint["ema"]
+                base_weights = {
+                    key.replace("network.", ""): ema_weights[key]
+                    for key in ema_weights
+                    if key.startswith("network.")
+                }
+                self.actor.load_state_dict(base_weights, strict=self.strict_load)
+                logging.info("Loaded EMA weights from pre-trained checkpoint %s", network_path)
+            else:
+                # Fall back to model weights
+                model_weights = checkpoint["model"]
+                base_weights = {
+                    key.replace("network.", ""): model_weights[key]
+                    for key in model_weights
+                    if key.startswith("network.")
+                }
+                self.actor.load_state_dict(base_weights, strict=self.strict_load)
+                logging.info("Loaded model weights from pre-trained checkpoint %s", network_path)
+            
+            # For pre-trained model, actor_ft is same as actor (no fine-tuning)
+            self.actor_ft = self.actor
+        else:
+            # Fine-tuned checkpoint: original loading logic
             base_weights = {
                 key.split("actor.")[1]: checkpoint["model"][key]
                 for key in checkpoint["model"]
                 if "actor." in key
             }
-            use_ft = True
-            self.actor.load_state_dict(base_weights, strict=True)
-        except Exception:
-            assert ft_denoising_steps == 0, (
-                "If no base policy weights are found, ft_denoising_steps must be 0"
-            )
-            base_weights = {
-                key.split("network.")[1]: checkpoint["model"][key]
-                for key in checkpoint["model"]
-                if "network." in key
-            }
-            use_ft = False
-            logging.info("Actor weights not found. Using pre-trained weights!")
-            self.actor.load_state_dict(base_weights, strict=True)
-        logging.info("Loaded base policy weights from %s", network_path)
+            self.actor.load_state_dict(base_weights, strict=self.strict_load)
+            logging.info("Loaded base policy weights from %s", network_path)
 
-        # Always set up fine-tuned model
-        if use_ft:
+            # Set up fine-tuned model
             self.actor_ft = copy.deepcopy(self.network)
             ft_weights = {
                 key.split("actor_ft.")[1]: checkpoint["model"][key]
                 for key in checkpoint["model"]
                 if "actor_ft." in key
             }
-            self.actor_ft.load_state_dict(ft_weights, strict=True)
+            self.actor_ft.load_state_dict(ft_weights, strict=self.strict_load)
             logging.info("Loaded fine-tuned policy weights from %s", network_path)
 
     # override

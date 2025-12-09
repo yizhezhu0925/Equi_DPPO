@@ -14,8 +14,14 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
         self,
         env,
         normalization_path,
+        normalize_obs=True,
+        normalize_action=True,
+        **kwargs,
     ):
         self.env = env
+
+        self.normalize_obs = normalize_obs
+        self.normalize_action = normalize_action
 
         # setup spaces
         self.action_space = env.action_space
@@ -51,10 +57,12 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
         raw_obs = self.env.reset()
 
         # normalize
-        obs = self.normalize_obs(raw_obs)
+        obs = (
+            self._normalize_obs(raw_obs) if self.normalize_obs else raw_obs
+        )
         return {"state": obs}
 
-    def normalize_obs(self, obs):
+    def _normalize_obs(self, obs):
         return 2 * ((obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5)
 
     def unnormalize_action(self, action):
@@ -62,11 +70,13 @@ class MujocoLocomotionLowdimWrapper(gym.Env):
         return action * (self.action_max - self.action_min) + self.action_min
 
     def step(self, action):
-        raw_action = self.unnormalize_action(action)
+        raw_action = (
+            self.unnormalize_action(action) if self.normalize_action else action
+        )
         raw_obs, reward, done, info = self.env.step(raw_action)
 
         # normalize
-        obs = self.normalize_obs(raw_obs)
+        obs = self._normalize_obs(raw_obs) if self.normalize_obs else raw_obs
         return {"state": obs}, reward, done, info
 
     def render(self, **kwargs):

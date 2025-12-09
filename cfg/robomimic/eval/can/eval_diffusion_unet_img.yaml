@@ -26,14 +26,14 @@ ddim_steps: 5
 ft_denoising_steps: 0
 
 n_steps: 300  # each episode takes max_episode_steps / act_steps steps
-render_num: 0
+render_num: 1
 
 env:
   n_envs: 20  # reduce gpu usage
   name: ${env_name}
   best_reward_threshold_for_success: 1
   max_episode_steps: 300
-  save_video: False
+  save_video: True
   use_image_obs: True
   wrappers:
     robomimic_image:
@@ -59,7 +59,7 @@ shape_meta:
     shape: [7]
 
 model:
-  _target_: model.diffusion.diffusion_eval_ft.DiffusionEval
+  _target_: model.diffusion.diffusion_eval.DiffusionEval
   ft_denoising_steps: ${ft_denoising_steps}
   predict_epsilon: True
   denoised_clip_value: 1.0

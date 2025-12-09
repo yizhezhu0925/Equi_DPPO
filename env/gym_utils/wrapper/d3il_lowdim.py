@@ -16,8 +16,14 @@ class D3ilLowdimWrapper(gym.Env):
         self,
         env,
         normalization_path,
+        normalize_obs=True,
+        normalize_action=True,
+        **kwargs,
     ):
         self.env = env
+
+        self.normalize_obs = normalize_obs
+        self.normalize_action = normalize_action
 
         # setup spaces
         self.action_space = env.action_space
@@ -53,16 +59,15 @@ class D3ilLowdimWrapper(gym.Env):
         )  # used to set all environments to specified seeds
         if new_seed is not None:
             self.seed(seed=new_seed)
-            obs = self.env.reset()
-        else:
-            # random reset
-            obs = self.env.reset()
+        # env.reset does not support options; ignore other keys
+        obs = self.env.reset()
 
         # normalize
-        obs = self.normalize_obs(obs)
+        if self.normalize_obs:
+            obs = self._normalize_obs(obs)
         return {"state": obs}
 
-    def normalize_obs(self, obs):
+    def _normalize_obs(self, obs):
         return 2 * ((obs - self.obs_min) / (self.obs_max - self.obs_min + 1e-6) - 0.5)
 
     def unnormaliza_action(self, action):
@@ -70,11 +75,13 @@ class D3ilLowdimWrapper(gym.Env):
         return action * (self.action_max - self.action_min) + self.action_min
 
     def step(self, action):
-        action = self.unnormaliza_action(action)
+        if self.normalize_action:
+            action = self.unnormaliza_action(action)
         obs, reward, done, info = self.env.step(action)
 
         # normalize
-        obs = self.normalize_obs(obs)
+        if self.normalize_obs:
+            obs = self._normalize_obs(obs)
         return {"state": obs}, reward, False, info
 
     def render(self, mode="rgb_array"):

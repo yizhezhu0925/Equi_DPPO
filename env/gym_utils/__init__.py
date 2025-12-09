@@ -1,10 +1,14 @@
 import os
 import json
+import inspect
+import logging
 
 try:
     from collections.abc import Iterable
 except ImportError:
     Iterable = (tuple, list)
+
+log = logging.getLogger(__name__)
 
 
 def make_async(
@@ -172,7 +176,29 @@ def make_async(
         # add wrappers
         if wrappers is not None:
             for wrapper, args in wrappers.items():
-                env = wrapper_dict[wrapper](env, **args)
+                wrapper_cls = wrapper_dict[wrapper]
+                # Filter out unsupported kwargs for wrappers that do not accept **kwargs
+                args_dict = {k: v for k, v in args.items()}
+                sig = inspect.signature(wrapper_cls.__init__)
+                accepts_var_kw = any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD
+                    for p in sig.parameters.values()
+                )
+                if not accepts_var_kw:
+                    valid_keys = {
+                        name for name in sig.parameters.keys() if name != "self"
+                    }
+                    extra_keys = set(args_dict) - valid_keys
+                    if extra_keys:
+                        log.warning(
+                            "Wrapper %s received unsupported args %s; ignoring them.",
+                            wrapper,
+                            sorted(extra_keys),
+                        )
+                        args_dict = {
+                            k: v for k, v in args_dict.items() if k in valid_keys
+                        }
+                env = wrapper_cls(env, **args_dict)
         return env
 
     def dummy_env_fn():
@@ -218,11 +244,12 @@ def make_async(
         return MultiStep(env=env, n_obs_steps=wrappers.multi_step.n_obs_steps)
 
     env_fns = [_make_env for _ in range(num_envs)]
+
     return (
         AsyncVectorEnv(
             env_fns,
             dummy_env_fn=(
-                dummy_env_fn if render or render_offscreen or use_image_obs else None
+            dummy_env_fn if render or render_offscreen or use_image_obs else None
             ),
             delay_init="avoiding" in id,  # add delay for D3IL initialization
         )
